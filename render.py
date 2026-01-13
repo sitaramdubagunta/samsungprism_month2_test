@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from pytorch3d.io import load_ply
 from pytorch3d.structures import Meshes
 from pytorch3d.renderer import (
-    PerspectiveCameras,
+    FoVPerspectiveCameras,
     RasterizationSettings,
     MeshRenderer,
     MeshRasterizer,
@@ -21,7 +21,7 @@ from pytorch3d.renderer import (
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # ============================================================
-# CAMERA FROM .TKA (GROUND TRUTH)
+# CAMERA FROM .TKA (GROUND TRUTH — DO NOT TOUCH)
 # ============================================================
 R = np.array([
     [ 0.65577368,  0.00995449,  0.75489191],
@@ -42,8 +42,14 @@ K = np.array([
 ], dtype=np.float32)
 
 W, H = 1600, 1200
-fx, fy = K[0, 0], K[1, 1]
-cx, cy = K[0, 2], K[1, 2]
+
+# ============================================================
+# INTRINSICS → FOV (PyTorch3D expects FoV)
+# ============================================================
+fx = K[0, 0]
+fov_x = 2.0 * np.arctan(W / (2.0 * fx))
+fov_deg = np.degrees(fov_x)
+fov_tensor = torch.tensor([fov_deg], dtype=torch.float32, device=device)
 
 # ============================================================
 # LOAD MESH (.PLY)
@@ -53,33 +59,14 @@ verts = verts.to(device)
 faces = faces.to(device)
 
 # ============================================================
-# DATASET-LEVEL MESH ALIGNMENT  (CRITICAL STEP)
-# ============================================================
-# The mesh is NOT in the same world frame as the .tka camera.
-# We apply ONE fixed rigid transform to align mesh "front"
-# with the camera-facing direction.
-#
-# This is NOT camera correction.
-# This is NOT learning-time logic.
-# This is dataset canonicalization.
-
-# 180° rotation about Y axis (front/back correction)
-ALIGN_Y_180 = torch.tensor([
-    [-1.0,  0.0,  0.0],
-    [ 0.0,  1.0,  0.0],
-    [ 0.0,  0.0, -1.0]
-], dtype=torch.float32, device=device)
-
-verts = verts @ ALIGN_Y_180.T
-
-# ============================================================
-# NORMALIZE MESH (SCALE ONLY, NO ROTATION)
+# NORMALIZE MESH (UNIT SCALE)
 # ============================================================
 center = verts.mean(dim=0)
 verts = verts - center
 scale = torch.max(torch.norm(verts, dim=1))
 verts = verts / scale
 
+# Simple gray material (texture irrelevant for this task)
 textures = TexturesVertex(
     verts_features=torch.ones_like(verts)[None] * 0.7
 )
@@ -91,15 +78,17 @@ mesh = Meshes(
 )
 
 # ============================================================
-# PERSPECTIVE CAMERA (SCREEN SPACE, NO AXIS HACKS)
+# CAMERA (TEMP SCALE: t / 500 AS REQUESTED)
 # ============================================================
-cameras = PerspectiveCameras(
-    focal_length=((fx, fy),),
-    principal_point=((cx, cy),),
-    image_size=((H, W),),
-    in_ndc=False,
-    R=torch.from_numpy(R).unsqueeze(0).to(device),
-    T=torch.from_numpy(t / 500.0).unsqueeze(0).to(device),  # TEMP SCALE
+R_torch = torch.from_numpy(R).unsqueeze(0).to(device)
+
+t_scaled = t / 500.0   # <-- YOU ASKED FOR THIS
+t_torch = torch.from_numpy(t_scaled).unsqueeze(0).to(device)
+
+cameras = FoVPerspectiveCameras(
+    R=R_torch,
+    T=t_torch,
+    fov=fov_tensor,
     device=device
 )
 
@@ -112,11 +101,17 @@ raster_settings = RasterizationSettings(
     faces_per_pixel=1
 )
 
-# Light near camera
+# Light slightly in front of the camera
 lights = PointLights(
     device=device,
-    location=torch.from_numpy(t / 500.0).unsqueeze(0).to(device)
-             + torch.tensor([[0.0, 0.0, 1.0]], device=device)
+    location=t_torch + torch.tensor([[0.0, 0.0, 1.0]], device=device)
+)
+
+shader = SoftPhongShader(
+    device=device,
+    cameras=cameras,
+    lights=lights,
+    blend_params=BlendParams(background_color=(0.0, 0.0, 0.0))
 )
 
 renderer = MeshRenderer(
@@ -124,12 +119,7 @@ renderer = MeshRenderer(
         cameras=cameras,
         raster_settings=raster_settings
     ),
-    shader=SoftPhongShader(
-        device=device,
-        cameras=cameras,
-        lights=lights,
-        blend_params=BlendParams(background_color=(0.0, 0.0, 0.0))
-    )
+    shader=shader
 )
 
 # ============================================================
@@ -140,5 +130,5 @@ image = renderer(mesh)[0, ..., :3].cpu().numpy()
 plt.figure(figsize=(8, 6))
 plt.imshow(image)
 plt.axis("off")
-plt.title("GT Render from .tka Camera (dataset-aligned mesh)")
+plt.title("GT Render from .tka Camera")
 plt.show()
