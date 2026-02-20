@@ -1,0 +1,21 @@
+Problem Statement:
+Generation of camera extrinsics of a virtual camera for a given 3D face model using any partial view image of the 3D face model taken from the virtual camera and its intrinsics. 
+Given a 3D Face model and partial view images of the 3D model captured by the virtual cameras from any view, the camera extrinsics matrix should be obtained.
+The 3D face mesh and the partial view images may contain a neutral expression or a deformed expression. 
+With the obtained accurate camera extrinsics, different partial view images should be generated for the same virtual camera. 
+
+Pipeline for Camera Extrinsic Prediction and Application:
+Module 1: Given a face mesh, and a partial view image of the face mesh, develop an ML model to estimate the camera extrinsics of the virtual cameras for the corresponding partial view image.
+Module 2: Having a robust pipeline for Module 1, generate different partial view images using Pytorch3D for the same face mesh using camera extrinsics obtained from Module 1.
+
+Verification Metrics:
+Perceptual loss.
+Landmark consistency loss (2D-3D)
+Per-pixel loss.
+
+References:
+
+https://flame.is.tue.mpg.de/
+PyTorch3D · A library for deep learning with 3D data
+OpenCV: Perspective-n-Point (PnP) pose computation
+https://pytorch3d.org/tutorials/camera_position_optimization_with_differentiable_rendering
